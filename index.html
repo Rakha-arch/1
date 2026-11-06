@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Pantry FIFO</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f1f5f9; color: #1e293b; }
+    .container { width: min(100% - 32px, 900px); margin: 30px auto; }
+    h1 { margin-bottom: 6px; color: #166534; }
+    .subtitle { margin-top: 0; color: #64748b; }
+    .card { background: white; border-radius: 12px; padding: 20px; margin: 18px 0; box-shadow: 0 3px 12px #00000012; }
+    form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    label { display: flex; flex-direction: column; gap: 6px; font-weight: bold; font-size: 14px; }
+    input { padding: 11px; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 15px; }
+    button { border: 0; border-radius: 7px; padding: 11px 15px; cursor: pointer; font-weight: bold; background: #16a34a; color: white; }
+    button:hover { background: #15803d; }
+    .full { grid-column: 1 / -1; }
+    .alert { border-left: 5px solid #f59e0b; background: #fffbeb; padding: 12px; border-radius: 6px; margin-bottom: 15px; }
+    .empty { color: #64748b; text-align: center; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 8px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+    th { color: #475569; background: #f8fafc; }
+    .status { font-weight: bold; }
+    .expired { color: #dc2626; }
+    .soon { color: #d97706; }
+    .safe { color: #16a34a; }
+    .actions { display: flex; gap: 6px; }
+    .use { background: #2563eb; padding: 7px 10px; }
+    .delete { background: #dc2626; padding: 7px 10px; }
+    @media (max-width: 650px) { form { grid-template-columns: 1fr; } table { font-size: 13px; } th, td { padding: 8px 4px; } .hide-mobile { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Smart Pantry</h1>
+    <p class="subtitle">Manajemen stok makanan dengan metode First In First Out (FIFO)</p>
+
+    <section class="card">
+      <h2>Tambah Stok Makanan</h2>
+      <form id="pantryForm">
+        <label>Nama makanan<input id="name" required placeholder="Contoh: Susu" /></label>
+        <label>Jumlah<input id="quantity" type="number" min="1" required placeholder="Contoh: 2" /></label>
+        <label>Tanggal masuk<input id="entryDate" type="date" required /></label>
+        <label>Tanggal kedaluwarsa<input id="expiryDate" type="date" required /></label>
+        <button class="full" type="submit">Tambah ke Pantry</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Notifikasi</h2>
+      <div id="notification"><div class="empty">Belum ada notifikasi.</div></div>
+    </section>
+
+    <section class="card">
+      <h2>Daftar Stok FIFO</h2>
+      <div id="tableContainer"></div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_KEY = 'smartPantryItems';
+    let items = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const form = document.getElementById('pantryForm');
+    const today = new Date();
+    document.getElementById('entryDate').value = today.toISOString().slice(0, 10);
+
+    function save() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    }
+
+    function daysUntil(date) {
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const target = new Date(date + 'T00:00:00');
+      return Math.ceil((target - now) / 86400000);
+    }
+
+    function status(expiry) {
+      const days = daysUntil(expiry);
+      if (days < 0) return ['Kedaluwarsa', 'expired'];
+      if (days <= 7) return [`Segera (${days} hari)`, 'soon'];
+      return ['Aman', 'safe'];
+    }
+
+    function render() {
+      items.sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+      const alerts = items.filter(item => daysUntil(item.expiryDate) <= 7);
+      document.getElementById('notification').innerHTML = alerts.length
+        ? alerts.map(item => `<div class="alert"><b>${item.name}</b> tersisa ${item.quantity} dan ${daysUntil(item.expiryDate) < 0 ? 'sudah kedaluwarsa' : 'akan kedaluwarsa dalam ' + daysUntil(item.expiryDate) + ' hari'}.</div>`).join('')
+        : '<div class="empty">Tidak ada makanan yang akan kedaluwarsa dalam 7 hari.</div>';
+
+      if (!items.length) {
+        document.getElementById('tableContainer').innerHTML = '<div class="empty">Belum ada stok makanan.</div>';
+        return;
+      }
+      document.getElementById('tableContainer').innerHTML = `<table><thead><tr><th>Nama</th><th>Jumlah</th><th class="hide-mobile">Tanggal Masuk</th><th>Kedaluwarsa</th><th>Status</th><th>Aksi</th></tr></thead><tbody>${items.map(item => {
+        const [label, className] = status(item.expiryDate);
+        return `<tr><td>${item.name}</td><td>${item.quantity}</td><td class="hide-mobile">${item.entryDate}</td><td>${item.expiryDate}</td><td class="status ${className}">${label}</td><td><div class="actions"><button class="use" onclick="useItem('${item.id}')">Pakai</button><button class="delete" onclick="deleteItem('${item.id}')">Hapus</button></div></td></tr>`;
+      }).join('')}</tbody></table>`;
+    }
+
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const entryDate = document.getElementById('entryDate').value;
+      const expiryDate = document.getElementById('expiryDate').value;
+      if (expiryDate < entryDate) { alert('Tanggal kedaluwarsa tidak boleh sebelum tanggal masuk.'); return; }
+      items.push({ id: Date.now().toString(), name: document.getElementById('name').value.trim(), quantity: Number(document.getElementById('quantity').value), entryDate, expiryDate });
+      save(); form.reset(); document.getElementById('entryDate').value = today.toISOString().slice(0, 10); render();
+    });
+
+    function useItem(id) {
+      const item = items.find(item => item.id === id);
+      if (!item) return;
+      item.quantity -= 1;
+      if (item.quantity <= 0) items = items.filter(item => item.id !== id);
+      save(); render();
+    }
+
+    function deleteItem(id) {
+      items = items.filter(item => item.id !== id);
+      save(); render();
+    }
+
+    render();
+  </script>
+</body>
+</html>
